@@ -24,12 +24,13 @@ class Global:
         (0, 0, 255), (85, 0, 255), (170, 0, 255), (255, 0, 255),
         (255, 0, 170)
     ]
-    num_workers = 4
+    num_workers = 8
     buffer_size = 30
     input_frame_buffer = queue.Queue(maxsize=buffer_size)
     output_frame_buffer = {}
     output_frame_buffer_lock = threading.Lock()
     stop_flag = threading.Event()
+    finish_video = threading.Event()
     next_id = 0
 
 
@@ -73,6 +74,7 @@ class SensorCam:
         self.cap = cv2.VideoCapture(camera_descriptor)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self._resolution[0])
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._resolution[1])
+        self.total_frames = self.cap.get(cv2.CAP_PROP_FRAME_COUNT)
 
         if not self.cap.isOpened():
             raise ValueError(f"Could not open video device: {camera_descriptor}")
@@ -127,9 +129,13 @@ def DetectorThread(detector: Detector):
 def CamThread(sensor: SensorCam):
     while not Global.stop_flag.is_set():
         data = sensor.get()
+        print(f"Frame: {Global.next_id}/{sensor.total_frames}", data is None)
         if data is not None:
             Global.input_frame_buffer.put((Global.next_id, data))
             Global.next_id += 1
+        else:
+            Global.finish_video.set()
+            break
 
 
 def main():
@@ -155,6 +161,9 @@ def main():
         last_id = 0
         time.sleep(1)
         while not Global.stop_flag.is_set():
+            if Global.finish_video.is_set() and Global.input_frame_buffer.empty():
+                Global.stop_flag.set()
+                break
             try:
                 with Global.output_frame_buffer_lock:
                     if len(Global.output_frame_buffer.keys()) <= 0:
