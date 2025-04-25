@@ -95,7 +95,7 @@ class SensorCam:
 
 
 class WindowImage:
-    def __init__(self, resolution: tuple[int, int], show: bool = True, save: bool = False, out_file: str = "res.mp4"):
+    def __init__(self, resolution: tuple[int, int], show: bool = True, save: bool = False, out_file: str = "results/res.mp4"):
         self._resolution = resolution
         self._save = save
         self._show = show

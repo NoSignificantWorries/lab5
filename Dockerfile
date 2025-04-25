@@ -5,7 +5,7 @@ WORKDIR /home/app
 RUN apt update
 RUN apt install libgl1-mesa-glx
 
-COPY requirements.txt .
+COPY resources/requirements.txt .
 
 RUN pip install -r requirements.txt
 

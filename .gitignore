@@ -1,7 +1,8 @@
 .vscode/
 __pycache__/
+.devcontainer/
 *.pt
 *.jpg
-.qodo
+.qodo/
 utils/
 log/
