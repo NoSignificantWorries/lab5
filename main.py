@@ -1,6 +1,9 @@
+import os
 import time
 import queue
 import threading
+import logging
+import argparse
 
 import numpy as np
 import cv2
@@ -24,8 +27,8 @@ class Global:
         (0, 0, 255), (85, 0, 255), (170, 0, 255), (255, 0, 255),
         (255, 0, 170)
     ]
-    num_workers = 8
-    buffer_size = 30
+    num_workers = 12
+    buffer_size = 2
     input_frame_buffer = queue.Queue(maxsize=buffer_size)
     output_frame_buffer = {}
     output_frame_buffer_lock = threading.Lock()
@@ -92,12 +95,12 @@ class SensorCam:
 
 
 class WindowImage:
-    def __init__(self, resolution: tuple[int, int], show: bool = True, save: bool = False):
+    def __init__(self, resolution: tuple[int, int], show: bool = True, save: bool = False, out_file: str = "res.mp4"):
         self._resolution = resolution
         self._save = save
         self._show = show
         if save:
-            self.out = cv2.VideoWriter("res.mp4", cv2.VideoWriter_fourcc(*'mp4v'), 30, self._resolution)
+            self.out = cv2.VideoWriter(out_file, cv2.VideoWriter_fourcc(*'mp4v'), 30, self._resolution)
         else:
             self.out = None
 
@@ -108,7 +111,7 @@ class WindowImage:
 
     def show(self, frame: np.ndarray):
         if frame is None:
-            return
+            raise RuntimeError("Unknown error occured. Can`t read new frame!")
         if self._show:
             cv2.imshow("Cam", frame)
         if self._save:
@@ -138,8 +141,29 @@ def CamThread(sensor: SensorCam):
             break
 
 
-def main():
-    cam = SensorCam("output.mp4", (640, 480))
+def main(input_file: str, output_file: str, resolution: str) -> None:
+    if not os.path.exists("log"):
+        os.makedirs("log")
+    
+    logging.config.fileConfig("logging.conf")
+    logger = logging.getLogger("my_logger")
+
+    try:
+        resolution = tuple(map(int, resolution.split("x")))
+    except BaseException:
+        logger.critical("Wrong resolution format, it should be <integer>x<integer>!")
+        raise ValueError("Wrong resolution format.")
+    
+    if resolution[0] <= 0 or resolution[1] <= 0:
+        logger.critical(f"Wrong dimension values width: {resolution[0]}, height: {resolution[1]}")
+        raise ValueError("Wrong resolution format.")
+
+    try:
+        cam = SensorCam(input_file, resolution)
+    except ValueError as err:
+        logger.critical(err)
+        raise ValueError("Errors with camera sensor.")
+    
     cam_thread = threading.Thread(target=CamThread, args=(cam,))
     cam_thread.daemon = True
     cam_thread.start()
@@ -155,11 +179,12 @@ def main():
         detectors.append(detector)
         detector_threads.append(thread)
     
-    window = WindowImage((640, 480), False, True)
+    window = WindowImage(resolution, False, output_file is not None, output_file)
     
     try:
         last_id = 0
         time.sleep(1)
+        start = time.time()
         while not Global.stop_flag.is_set():
             if Global.finish_video.is_set() and Global.input_frame_buffer.empty():
                 Global.stop_flag.set()
@@ -171,9 +196,14 @@ def main():
                     if max(Global.output_frame_buffer.keys()) <= Global.buffer_size:
                         continue
                     if last_id in Global.output_frame_buffer.keys():
-                        window.show(Global.output_frame_buffer[last_id])
-                        del Global.output_frame_buffer[last_id]
-                        last_id += 1
+                        try:
+                            window.show(Global.output_frame_buffer[last_id])
+                            del Global.output_frame_buffer[last_id]
+                            last_id += 1
+                        except RuntimeError as err:
+                            logger.critical(err)
+                            Global.stop_flag.set()
+                            raise RuntimeError("Unknown errors with camera.")
             except queue.Empty:
                 pass
 
@@ -185,8 +215,22 @@ def main():
         Global.stop_flag.set()
         print("Exit...")
 
-    time.sleep(1)
+    end = time.time()
+    time.sleep(2)
+
+    print(f"Total time: {end - start}")
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument("-i", "--input_file", type=str, help="Name of your video device", default="/dev/video0")
+    parser.add_argument("-o", "--output_file", type=str, help="Name of your video device", default=None)
+    parser.add_argument("-r", "--resolution", type=str, help="Video resolution", default="640x480")
+
+    args = parser.parse_args()
+    
+    try:
+        main(args.input_file, args.output_file, args.resolution)
+    except BaseException as exp:
+        print(f"Some errors occured: {exp}")
