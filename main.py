@@ -124,8 +124,7 @@ class WindowImage:
             self.out.write(frame)
 
 
-def DetectorThread(num_threads: int):
-    detector = Detector(num_threads)
+def DetectorThread(detector: Detector):
     while not Global.stop_flag.is_set():
         try:
             id, frame = Global.input_frame_buffer.get(timeout=0.1)
@@ -180,9 +179,12 @@ def main(input_file: str, output_file: str, resolution: str, num_threads_per_wor
     cam_thread.start()
     
     time.sleep(0.5)
+    detectors = []
     detector_threads = []
     for _ in range(Global.num_workers):
-        thread = threading.Thread(target=DetectorThread, args=(num_threads_per_worker,))
+        detector = Detector(num_threads_per_worker)
+        detectors.append(detector)
+        thread = threading.Thread(target=DetectorThread, args=(detector,))
         thread.daemon = True
         thread.start()
         detector_threads.append(thread)
