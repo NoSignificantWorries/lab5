@@ -5,6 +5,7 @@ import threading
 import logging
 import argparse
 
+import torch
 import numpy as np
 import cv2
 import ultralytics as ult
@@ -27,14 +28,16 @@ class Global:
         (0, 0, 255), (85, 0, 255), (170, 0, 255), (255, 0, 255),
         (255, 0, 170)
     ]
-    num_workers = 12
-    buffer_size = 2
+    num_workers = 4
+    buffer_size = num_workers * 2
     input_frame_buffer = queue.Queue(maxsize=buffer_size)
     output_frame_buffer = {}
     output_frame_buffer_lock = threading.Lock()
     stop_flag = threading.Event()
     finish_video = threading.Event()
     next_id = 0
+    total_pred_times = 0.0
+    n = 1e-6
 
 
 def draw_pose(frame: np.ndarray, keypoints: np.ndarray, confs: np.ndarray,
@@ -51,8 +54,11 @@ def draw_pose(frame: np.ndarray, keypoints: np.ndarray, confs: np.ndarray,
 
 
 class Detector:
-    def __init__(self):
+    def __init__(self, num_threads: int = 4):
+        torch.set_num_threads(num_threads)
         self.model = ult.YOLO("yolov8s-pose.pt")
+        self.model.to("cpu")
+        print(torch.get_num_threads())
     
     def predict(self, id: int, frame: np.ndarray) -> tuple[int, np.ndarray]:
         results = self.model(frame)
@@ -118,13 +124,18 @@ class WindowImage:
             self.out.write(frame)
 
 
-def DetectorThread(detector: Detector):
+def DetectorThread(num_threads: int):
+    detector = Detector(num_threads)
     while not Global.stop_flag.is_set():
         try:
             id, frame = Global.input_frame_buffer.get(timeout=0.1)
+            Global.n += 1
         except queue.Empty:
             continue
+        start = time.time()
         id, frame = detector.predict(id, frame)
+        end = time.time()
+        print(end - start)
         with Global.output_frame_buffer_lock:
             Global.output_frame_buffer[id] = frame
 
@@ -141,11 +152,11 @@ def CamThread(sensor: SensorCam):
             break
 
 
-def main(input_file: str, output_file: str, resolution: str) -> None:
+def main(input_file: str, output_file: str, resolution: str, num_threads_per_worker: int = 4) -> None:
     if not os.path.exists("log"):
         os.makedirs("log")
     
-    logging.config.fileConfig("logging.conf")
+    logging.config.fileConfig("resources/logging.conf")
     logger = logging.getLogger("my_logger")
 
     try:
@@ -169,14 +180,11 @@ def main(input_file: str, output_file: str, resolution: str) -> None:
     cam_thread.start()
     
     time.sleep(0.5)
-    detectors = []
     detector_threads = []
     for _ in range(Global.num_workers):
-        detector = Detector()
-        thread = threading.Thread(target=DetectorThread, args=(detector,))
+        thread = threading.Thread(target=DetectorThread, args=(num_threads_per_worker,))
         thread.daemon = True
         thread.start()
-        detectors.append(detector)
         detector_threads.append(thread)
     
     window = WindowImage(resolution, False, output_file is not None, output_file)
@@ -217,20 +225,23 @@ def main(input_file: str, output_file: str, resolution: str) -> None:
 
     end = time.time()
     time.sleep(2)
+    
+    print(f"Time per frame: {(Global.total_pred_times / Global.n):.3f} seconds.")
 
-    print(f"Total time: {end - start}")
+    print(f"Total time: {end - start},{898.3616771697998 / (end - start)}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("-i", "--input_file", type=str, help="Name of your video device", default="/dev/video0")
+    parser.add_argument("-i", "--input_file", type=str, help="Name of your video device", default="data/output.mp4")
     parser.add_argument("-o", "--output_file", type=str, help="Name of your video device", default=None)
     parser.add_argument("-r", "--resolution", type=str, help="Video resolution", default="640x480")
+    parser.add_argument("-t", "--threads_per_worker", type=int, help="Number of threads per worker", default=2)
 
     args = parser.parse_args()
     
     try:
-        main(args.input_file, args.output_file, args.resolution)
+        main(args.input_file, args.output_file, args.resolution, args.threads_per_worker)
     except BaseException as exp:
         print(f"Some errors occured: {exp}")

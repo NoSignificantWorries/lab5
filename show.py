@@ -13,7 +13,7 @@ image_path = args.image
 
 data = {}
 with open(data_path, "r") as file:
-    lines = file.readlines()[1:]
+    lines = file.readlines()
     lines = [line[:-1].split(" ") for line in lines]
     X = list(map(int, lines[0]))
     for line in lines[1:]:
